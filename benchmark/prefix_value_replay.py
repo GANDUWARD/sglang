@@ -52,12 +52,14 @@ def replay_one(url, item, output_tokens):
     start = time.perf_counter()
     first_token = None
     last = None
+    done = False
     with urllib.request.urlopen(request, timeout=180) as response:
         for line in response:
             if not line.startswith(b"data:"):
                 continue
             data = line[5:].strip()
             if data == b"[DONE]":
+                done = True
                 break
             event = json.loads(data)
             if "error" in event:
@@ -69,6 +71,10 @@ def replay_one(url, item, output_tokens):
     if last is None or first_token is None:
         raise RuntimeError("No token-bearing stream event received")
     meta = last.get("meta_info", {})
+    if not done or not isinstance(meta.get("finish_reason"), dict):
+        raise RuntimeError("Stream ended without completion marker and finish reason")
+    if meta["finish_reason"].get("type") != "length":
+        raise RuntimeError(f"Unexpected finish reason: {meta['finish_reason']}")
     if meta.get("completion_tokens") != output_tokens:
         raise RuntimeError(f"Unexpected completion length: {meta}")
     return {

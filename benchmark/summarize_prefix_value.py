@@ -1,6 +1,7 @@
 """Validate completed replays and summarize client-observed measurements."""
 
 import argparse
+import hashlib
 import json
 import math
 from collections import defaultdict
@@ -17,6 +18,10 @@ def percentile(values, q):
 
 def summarize(path):
     config = json.loads((path / "config.json").read_text())
+    trace_bytes = (path / "trace.json").read_bytes()
+    if hashlib.sha256(trace_bytes).hexdigest() != config["trace_sha256"]:
+        raise ValueError(f"Trace digest mismatch: {path}")
+    trace = json.loads(trace_bytes)
     rows = [
         json.loads(line) for line in (path / "requests.jsonl").read_text().splitlines()
     ]
@@ -24,12 +29,20 @@ def summarize(path):
         raise ValueError(f"Incomplete or failed trial: {path}")
     if [row["id"] for row in rows] != list(range(config["count"])):
         raise ValueError(f"Request IDs are not complete and ordered: {path}")
-    for row in rows:
+    if len(trace) != len(rows):
+        raise ValueError(f"Trace length mismatch: {path}")
+    for row, item in zip(rows, trace):
+        if row["group"] != item["group"]:
+            raise ValueError(f"Trace group mismatch: {path}")
         for field in ("ttft_s", "latency_s"):
             if not math.isfinite(row[field]) or row[field] <= 0:
                 raise ValueError(f"Invalid {field} in {path}")
         if row["meta_info"]["completion_tokens"] != config["output_tokens"]:
             raise ValueError(f"Unexpected completion length in {path}")
+        if row["meta_info"].get("finish_reason", {}).get("type") != "length":
+            raise ValueError(f"Unexpected finish reason in {path}")
+        if row["latency_s"] < row["ttft_s"]:
+            raise ValueError(f"TTFT exceeds total latency: {path}")
     # A final server snapshot is required, not just a partial client log.
     before = json.loads((path / "server-before.json").read_text())
     after = json.loads((path / "server-after.json").read_text())
