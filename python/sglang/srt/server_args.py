@@ -154,7 +154,13 @@ NSA_CHOICES = [
     "aiter",
 ]
 
-RADIX_EVICTION_POLICY_CHOICES = ["lru", "lfu"]
+RADIX_EVICTION_POLICY_CHOICES = [
+    "lru",
+    "lfu",
+    "indexed_lru",
+    "reuse_value",
+    "reuse_value_frozen",
+]
 
 RL_ON_POLICY_TARGET_CHOICES = ["fsdp"]
 

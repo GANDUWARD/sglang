@@ -1500,6 +1500,8 @@ class Scheduler(
                 return
             if self._abort_on_queued_limit(req):
                 return
+            if type(self.tree_cache) is RadixCache:
+                self.tree_cache.observe_request(req)
             self._prefetch_kvcache(req)
             self.waiting_queue.append(req)
             req.time_stats.wait_queue_entry_time = time.perf_counter()
@@ -2273,6 +2275,8 @@ class Scheduler(
     def get_internal_state(self, recv_req: GetInternalStateReq):
         ret = vars(get_global_server_args())
         ret["last_gen_throughput"] = self.last_gen_throughput
+        if type(self.tree_cache) is RadixCache:
+            ret["prefix_value_research"] = self.tree_cache.get_research_stats()
         ret["memory_usage"] = {
             "weight": round(self.tp_worker.model_runner.weight_load_mem_usage, 2),
             "kvcache": round(

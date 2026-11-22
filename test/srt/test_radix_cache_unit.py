@@ -642,5 +642,91 @@ class TestRadixCache(unittest.TestCase):
             self.assertEqual(len(node.hash_value), 1)
 
 
+class TestIndexedLRU(unittest.TestCase):
+    def make_cache(self, policy):
+        from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+
+        allocator = unittest.mock.Mock()
+        allocator.device = torch.device("cpu")
+        return RadixCache(
+            CacheInitParams(
+                disable=False,
+                req_to_token_pool=None,
+                token_to_kv_pool_allocator=allocator,
+                page_size=1,
+                eviction_policy=policy,
+            )
+        )
+
+    def assert_index_matches_tree(self, cache):
+        index = cache._leaf_index
+        try:
+            cache._leaf_index = None
+            expected = set(cache._collect_leaves())
+        finally:
+            cache._leaf_index = index
+        self.assertEqual(set(cache._collect_leaves()), expected)
+
+    def test_split_lock_evict_and_reset(self):
+        cache = self.make_cache("indexed_lru")
+        for tokens in ([1, 2, 3, 4], [1, 2, 5], [8, 9], [1, 7]):
+            cache.insert(RadixKey(list(tokens)), torch.tensor(tokens))
+            self.assert_index_matches_tree(cache)
+        match = cache.match_prefix(RadixKey([1, 2, 3]))
+        self.assert_index_matches_tree(cache)
+        node = match.last_device_node
+        cache.inc_lock_ref(node)
+        self.assert_index_matches_tree(cache)
+        cache.evict(100)
+        self.assert_index_matches_tree(cache)
+        self.assertGreater(cache.total_size(), 0)
+        cache.dec_lock_ref(node)
+        self.assert_index_matches_tree(cache)
+        cache.evict(100)
+        self.assertEqual(cache.total_size(), 0)
+        self.assert_index_matches_tree(cache)
+        cache.reset()
+        self.assertEqual(cache._leaf_index, set())
+
+    def test_same_eviction_as_lru_with_distinct_access_times(self):
+        caches = [self.make_cache(p) for p in ("lru", "indexed_lru")]
+        for cache in caches:
+            for tokens in ([1, 2, 3], [1, 2, 4], [5, 6]):
+                cache.insert(RadixKey(list(tokens)), torch.tensor(tokens))
+            for leaf in cache._collect_leaves():
+                leaf.last_access_time = float(leaf.key.token_ids[-1])
+            cache.evict(1)
+        self.assertEqual(
+            sorted(tuple(n.key.token_ids) for n in caches[0]._collect_leaves()),
+            sorted(tuple(n.key.token_ids) for n in caches[1]._collect_leaves()),
+        )
+
+    def test_learning_observes_request_once_and_bounds_lru_bonus(self):
+        from types import SimpleNamespace
+
+        cache = self.make_cache("reuse_value")
+        tokens = list(range(128))
+        req = SimpleNamespace(origin_input_ids=tokens, extra_key=None)
+        cache.observe_request(req)
+        cache.observe_request(req)
+        self.assertEqual(cache.reuse_model.tick, 1)
+        cache.insert(RadixKey(tokens), torch.tensor(tokens))
+        for _ in range(20):
+            cache.observe_request(
+                SimpleNamespace(origin_input_ids=tokens, extra_key=None)
+            )
+        leaf = cache._collect_leaves()[0]
+        score = cache._eviction_priority(leaf)
+        self.assertGreaterEqual(score, leaf.last_access_time)
+        self.assertLessEqual(score, leaf.last_access_time + 1.0)
+        identity = leaf._reuse_identity
+        cache.match_prefix(RadixKey(tokens[:64]))
+        self.assert_index_matches_tree(cache)
+        self.assertEqual(leaf._reuse_identity, identity)
+        cache.evict(1000)
+        self.assertEqual(cache.total_size(), 0)
+        self.assertGreater(len(cache.reuse_model.records), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

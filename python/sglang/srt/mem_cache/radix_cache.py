@@ -50,6 +50,7 @@ from sglang.srt.mem_cache.evict_policy import (
     PriorityStrategy,
 )
 from sglang.srt.mem_cache.hicache_storage import get_hash_str, hash_str_to_int64
+from sglang.srt.mem_cache.reuse_value import OnlineReuseValue, prefix_observations
 
 if TYPE_CHECKING:
     from sglang.srt.managers.schedule_batch import Req
@@ -277,7 +278,11 @@ class RadixCache(BasePrefixCache):
             self.key_match_fn = partial(_key_match_paged, page_size=self.page_size)
             self.get_child_key_fn = partial(get_child_key, page_size=self.page_size)
 
-        if self.eviction_policy == "lru":
+        research_policies = ("indexed_lru", "reuse_value", "reuse_value_frozen")
+        self._research_policy = self.eviction_policy in research_policies
+        if self._research_policy and (type(self) is not RadixCache or self.is_eagle):
+            raise ValueError("Research policies require plain non-EAGLE RadixCache")
+        if self.eviction_policy in ("lru", *research_policies):
             self.eviction_strategy: EvictionStrategy = LRUStrategy()
         elif self.eviction_policy == "lfu":
             self.eviction_strategy: EvictionStrategy = LFUStrategy()
@@ -316,6 +321,13 @@ class RadixCache(BasePrefixCache):
     ##### Public API #####
 
     def reset(self):
+        # Index structural leaves, including locked ones; filter locks at eviction.
+        self._leaf_index = set() if self._research_policy else None
+        self.reuse_model = (
+            OnlineReuseValue(learn=self.eviction_policy == "reuse_value")
+            if self.eviction_policy in ("reuse_value", "reuse_value_frozen")
+            else None
+        )
         # Initialize root with minimum priority so any real priority overrides it
         self.root_node = TreeNode(priority=-sys.maxsize)
         self.root_node.key = RadixKey(token_ids=[], extra_key=None)
@@ -325,6 +337,13 @@ class RadixCache(BasePrefixCache):
         self.root_node.hash_value = []
         self.evictable_size_ = 0
         self.protected_size_ = 0
+        self.research_stats = {
+            "observations": 0,
+            "observation_seconds": 0.0,
+            "eviction_calls": 0,
+            "eviction_seconds": 0.0,
+            "evicted_tokens": 0,
+        }
         self._record_all_cleared_event()
 
     def maybe_bigram_convert(
@@ -541,15 +560,58 @@ class RadixCache(BasePrefixCache):
     def total_size(self):
         return self._total_size_helper()
 
+    def observe_request(self, req):
+        if self.reuse_model is None or getattr(req, "_reuse_value_observed", False):
+            return
+        req._reuse_value_observed = True
+        started = time.perf_counter()
+        self.reuse_model.observe(
+            prefix_observations(req.origin_input_ids, req.extra_key)
+        )
+        self.research_stats["observations"] += 1
+        self.research_stats["observation_seconds"] += time.perf_counter() - started
+
+    def get_research_stats(self):
+        result = dict(self.research_stats)
+        result["policy"] = self.eviction_policy
+        if self.reuse_model is not None:
+            model = self.reuse_model
+            result.update(
+                positive_labels=model.positive_labels,
+                negative_labels=model.negative_labels,
+                censored_labels=model.censored_labels,
+                predictor_weights=list(model.weights),
+                history_entries=len(model.records),
+            )
+        return result
+
+    def _eviction_priority(self, node):
+        if self.reuse_model is None:
+            return self.eviction_strategy.get_priority(node)
+        if not hasattr(node, "_reuse_identity"):
+            segments = []
+            current = node
+            while current is not self.root_node:
+                segments.append(current.key.token_ids)
+                current = current.parent
+            tokens = [token for segment in reversed(segments) for token in segment]
+            observations = prefix_observations(tokens, node.key.extra_key)
+            node._reuse_identity = next(reversed(observations.items()), (None, 0))
+        identity, depth = node._reuse_identity
+        # A depth-dependent compute proxy, NOT measured GPU milliseconds.
+        value = self.reuse_model.retention_value(
+            identity, depth, recompute_cost=1.0 + depth / 4096.0, resource_size=1.0
+        )
+        # At most one second of LRU advantage: scores cannot pin old KV forever.
+        return node.last_access_time + min(value, 1.0)
+
     def evict(self, num_tokens: int):
         if self.disable:
             return
 
         start_time = time.perf_counter()
         leaves = self._collect_leaves()
-        eviction_heap = [
-            (self.eviction_strategy.get_priority(node), node) for node in leaves
-        ]
+        eviction_heap = [(self._eviction_priority(node), node) for node in leaves]
         heapq.heapify(eviction_heap)
 
         num_evicted = 0
@@ -561,12 +623,15 @@ class RadixCache(BasePrefixCache):
             self._delete_leaf(x)
 
             if len(x.parent.children) == 0 and x.parent.lock_ref == 0:
-                new_priority = self.eviction_strategy.get_priority(x.parent)
+                new_priority = self._eviction_priority(x.parent)
                 heapq.heappush(eviction_heap, (new_priority, x.parent))
 
             self._record_remove_event(x)
 
         self.update_eviction_metrics(num_evicted, start_time)
+        self.research_stats["eviction_calls"] += 1
+        self.research_stats["eviction_seconds"] += time.perf_counter() - start_time
+        self.research_stats["evicted_tokens"] += num_evicted
 
     def inc_lock_ref(self, node: TreeNode):
         if self.disable:
@@ -706,6 +771,9 @@ class RadixCache(BasePrefixCache):
             new_node.key = key
             new_node.value = value
             node.children[child_key] = new_node
+            if self._leaf_index is not None:
+                self._leaf_index.discard(node)
+                self._leaf_index.add(new_node)
             self.evictable_size_ += len(key)
             # Hash will be computed lazily during event emission
             self._record_store_event(new_node)
@@ -734,6 +802,11 @@ class RadixCache(BasePrefixCache):
         v = node.parent.children.pop(key, None)
         assert v == node, f"parent does not have child key, {key}"
 
+        if self._leaf_index is not None:
+            self._leaf_index.discard(node)
+            if node.parent is not self.root_node and not node.parent.children:
+                self._leaf_index.add(node.parent)
+
         self.evictable_size_ -= len(node.key)
 
     def _total_size_helper(self):
@@ -749,6 +822,8 @@ class RadixCache(BasePrefixCache):
         return total_size
 
     def _collect_leaves(self):
+        if self._leaf_index is not None:
+            return [node for node in self._leaf_index if node.lock_ref == 0]
         ret_list = []
         stack = list(self.root_node.children.values())
 

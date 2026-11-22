@@ -252,3 +252,6 @@ outputs/
 
 # Eval Cache
 .longbench_cache/
+
+# Local generated prefix-value replay artifacts (retain separately for reports).
+benchmark/prefix-value-local-trace/
