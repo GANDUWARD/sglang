@@ -109,7 +109,19 @@ timings include replay bookkeeping and must not be presented as scheduler timing
 
 ## GPU experiment procedure
 
-GPU serving and performance comparison remain pending. The Windows launcher
+GPU serving smoke validation passed on 2026-11-23; policy performance comparisons
+remain pending. The local isolated runtime uses PyTorch 2.9.1+cu130, Transformers
+4.57.1, FlashInfer 0.5.3 and the official sgl-kernel 0.3.19 CUDA 13 wheel.
+The inherited base image's newer FlashInfer JIT cache caused the first launch to
+fail; disabling system-site-package inheritance fixed that dependency conflict.
+CUDA matrix multiplication and sgl-kernel import passed on the RTX 4070 Laptop.
+Qwen3-0.6B loaded BF16 weights (reported 1.22 GB) and allocated exactly 2048 KV
+tokens (reported 0.11 GB each for K and V). Two identical 162-token inputs each
+completed 16 output tokens; reported cached tokens were 0 and 161 respectively.
+An additional 24-request streaming warmup completed. These are smoke checks, not
+evidence that any research policy improves latency, throughput or fairness.
+
+The Windows launcher
 `benchmark/run_prefix_value_server.ps1` uses Docker GPU passthrough, the pinned
 image, a read-only source mount and the existing `vllm-hf-cache` model volume.
 It requests 2048-token contexts, four running requests, 512-token prefill chunks,
@@ -127,6 +139,13 @@ Triton attention, disabled CUDA Graphs and static memory fraction 0.65.
 ```powershell
 ./benchmark/run_prefix_value_server.ps1 -Policy lru -CacheTokens 2048
 ```
+
+The launcher also accepts `-Image`, `-PythonExecutable`, and `-ModelPath`. For the
+local research image, use `sglang-prefix-research:cu130-v056post2-isolated` and
+`/opt/sglang-research/bin/python`. An explicit local model snapshot path avoids
+optional Hugging Face metadata queries during offline startup. The local runtime
+image is not an upstream SGLang release image; record its image ID and dependency
+freeze with every experiment.
 
 ```sh
 python3 benchmark/prefix_value_replay.py --output /tmp/trial-lru --seed 1729

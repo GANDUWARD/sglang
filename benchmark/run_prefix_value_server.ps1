@@ -4,7 +4,8 @@ param(
     [ValidateRange(1024, 16384)][int]$CacheTokens = 4096,
     [int]$Port = 30000,
     [string]$Image = 'lmsysorg/sglang:v0.5.6.post2',
-    [string]$PythonExecutable = 'python3'
+    [string]$PythonExecutable = 'python3',
+    [string]$ModelPath = 'Qwen/Qwen3-0.6B'
 )
 $ErrorActionPreference = 'Stop'
 $dockerPath = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
@@ -17,7 +18,7 @@ $arguments = @(
     '-v', 'vllm-hf-cache:/root/.cache/huggingface:ro',
     '-e', 'PYTHONPATH=/workspace/python', '-e', 'HF_HUB_OFFLINE=1',
     '--entrypoint', $PythonExecutable, $Image,
-    '-m', 'sglang.launch_server', '--model-path', 'Qwen/Qwen3-0.6B',
+    '-m', 'sglang.launch_server', '--model-path', $ModelPath,
     '--host', '0.0.0.0', '--port', '30000', '--context-length', '2048',
     '--max-total-tokens', "$CacheTokens", '--max-running-requests', '4',
     '--chunked-prefill-size', '512', '--mem-fraction-static', '0.65',
