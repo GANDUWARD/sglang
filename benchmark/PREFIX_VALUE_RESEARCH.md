@@ -142,3 +142,22 @@ measurement beyond this initial protocol.
 
 Novelty review against RadixAttention, learned prefix caching and newer retention
 policies is still required. CPU reuse improvements alone do not pass that gate.
+
+## Preliminary related-work gate (2026-11-23)
+
+The following primary publication pages and abstracts were checked. This is an
+overlap screen, not a full paper/code reproduction or an exhaustive review.
+
+| Work | Reported mechanism | Overlap and implication for this prototype |
+| --- | --- | --- |
+| [LPC, NeurIPS 2025](https://proceedings.nips.cc/paper_files/paper/2025/hash/414f642a1ea9350006669774cba9bcd4-Abstract-Conference.html) | Predict conversational continuation from content and combine predictions with access timestamps. | Learned prefix eviction combined with recency is already published. Using history features instead of content does not by itself establish novelty. |
+| [SAECache, arXiv 2605.18825](https://arxiv.org/abs/2605.18825) | Task-specific queues, semantic token-type weights, and online adaptation from eviction feedback. | Online adaptive reuse-value estimation already has close prior work; a lightweight learner alone is insufficient as a contribution. |
+| [When Fancy Eviction Fails, arXiv 2609.28870v3](https://arxiv.org/abs/2609.28870v3) | Production-trace study; recency baseline with one-hit demotion, compute-aware eviction and capacity-adaptive granularity. | Recency plus compute cost is also covered. Preserve LRU controls, one-off traffic, different capacities and negative results. |
+
+Current decision: **the broad novelty claim does not pass**. Continue the local
+prototype as an engineering experiment, without calling it a new research
+algorithm. A narrower contribution would need evidence of a specific unresolved
+structural dependency or maintenance-cost problem, full-text and code comparison,
+and controlled experiments against relevant implementations. The indexed leaf
+set and split-stable identities are implementation choices, not established
+research novelty. Published performance claims have not been reproduced here.
