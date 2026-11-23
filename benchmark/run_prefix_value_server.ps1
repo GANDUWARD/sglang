@@ -3,7 +3,8 @@ param(
     [string]$Policy = 'lru',
     [ValidateRange(1024, 16384)][int]$CacheTokens = 4096,
     [int]$Port = 30000,
-    [string]$Image = 'lmsysorg/sglang:v0.5.6.post2'
+    [string]$Image = 'lmsysorg/sglang:v0.5.6.post2',
+    [string]$PythonExecutable = 'python3'
 )
 $ErrorActionPreference = 'Stop'
 $dockerPath = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
@@ -15,7 +16,7 @@ $arguments = @(
     '--mount', "type=bind,source=$sourcePath,target=/workspace,readonly",
     '-v', 'vllm-hf-cache:/root/.cache/huggingface:ro',
     '-e', 'PYTHONPATH=/workspace/python', '-e', 'HF_HUB_OFFLINE=1',
-    '--entrypoint', 'python3', $Image,
+    '--entrypoint', $PythonExecutable, $Image,
     '-m', 'sglang.launch_server', '--model-path', 'Qwen/Qwen3-0.6B',
     '--host', '0.0.0.0', '--port', '30000', '--context-length', '2048',
     '--max-total-tokens', "$CacheTokens", '--max-running-requests', '4',
