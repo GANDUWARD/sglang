@@ -278,13 +278,24 @@ It records output-difference IDs, per-group timings, retractions and server
 arrival-order differences. It never compares deterministic and ordinary runs as
 one configuration.
 
-The launcher now accepts `-DeterministicInference` for a separate correctness
+The launcher accepts `-DeterministicInference` for a separate correctness
 diagnostic using the pinned version's Triton batch-invariant path and PyTorch
-sampler. The initial diagnostic failed during long-input cold compilation at the
-180-second client timeout; all four failed warmup outcomes were retained and no
-measured trial was accepted. A retry uses `--warmup-request-timeout 600`, with the
-measured replay timeout unchanged at 180 seconds. Its result is pending and is
-not part of either table above.
+sampler. Two initial diagnostics failed before measurement with a 512-token
+prefill budget. The first timed out at 180 seconds; a 600-second warmup retry did
+not resolve the problem. Compilation workers were present, but a consistent
+Python stack showed the scheduler repeatedly checking admission, not waiting in
+compilation. Source inspection established the mismatch:
+`Scheduler.init_deterministic_inference_config()` defaults Triton truncation
+alignment to 4096, while `PrefillAdder.add_one_req()` rejects a truncated chunk
+smaller than that alignment. With a 512 budget, the trace's longer prompts can
+remain unadmitted even on LRU. Both failed warmups and the diagnostic stack are
+retained. No measured result was accepted from either attempt.
+
+The launcher now uses a 4096-token prefill budget **only** for deterministic
+diagnostics, keeping the ordinary experiment's 512 budget unchanged. Corrected
+LRU/learned results are pending. The separate warmup-timeout option remains useful
+for cold compilation, but was not the fix for this admission problem. Do not mix
+these deterministic timings with the ordinary configuration in either table.
 
 ## Preliminary related-work gate (2026-11-23)
 

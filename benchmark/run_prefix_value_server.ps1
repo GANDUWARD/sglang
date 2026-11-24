@@ -12,7 +12,13 @@ $ErrorActionPreference = 'Stop'
 $dockerPath = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 $sourcePath = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $containerName = "sglang-prefix-$Policy-$CacheTokens"
-if ($DeterministicInference) { $containerName += '-deterministic' }
+$chunkedPrefillSize = 512
+if ($DeterministicInference) {
+    $containerName += '-deterministic'
+    # v0.5.6.post2 requires 4096-token prefill truncation alignment in this mode.
+    # A smaller budget can leave long prompts permanently unadmitted.
+    $chunkedPrefillSize = 4096
+}
 $arguments = @(
     'run', '-d', '--name', $containerName, '--gpus', 'all', '--shm-size', '2g',
     '-p', "127.0.0.1:${Port}:30000",
@@ -23,7 +29,7 @@ $arguments = @(
     '-m', 'sglang.launch_server', '--model-path', $ModelPath,
     '--host', '0.0.0.0', '--port', '30000', '--context-length', '2048',
     '--max-total-tokens', "$CacheTokens", '--max-running-requests', '4',
-    '--chunked-prefill-size', '512', '--mem-fraction-static', '0.65',
+    '--chunked-prefill-size', "$chunkedPrefillSize", '--mem-fraction-static', '0.65',
     '--disable-cuda-graph', '--attention-backend', 'triton',
     '--radix-eviction-policy', $Policy, '--enable-metrics', '--random-seed', '1729'
 )
