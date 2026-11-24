@@ -272,7 +272,8 @@ produced 21 text differences and 50/60 changed arrival orders. Reuse changed fro
 TTFT was 5.393 seconds, while maximum scheduler queue time was 0.896 seconds;
 the client stall is retained without claiming a cause. This demonstrates baseline
 variability, but does **not** by itself prove that every policy-related text
-difference is harmless. Concurrent output equivalence remains unverified.
+difference is harmless. A separate deterministic comparison completed below
+provides output-equivalence evidence for that tested configuration.
 
 `analyze_prefix_value_campaign.py <trial-directories...> --output <new-json>`
 validates full response coverage, matching settings and reset counters, and uses
@@ -297,10 +298,29 @@ retained. No measured result was accepted from either attempt.
 The launcher now uses a 4096-token prefill budget **only** for deterministic
 diagnostics, keeping the ordinary experiment's 512 budget unchanged. Corrected
 LRU completed 240/240 measured requests with P50/P95 TTFT of 288.96/1776.28 ms
-and 31,744 cached tokens. The learned counterpart failed during model
-initialization with insufficient profiled GPU memory and produced no measured
-trial. Output equivalence remains unverified; the failed initialization cannot
-establish that the learning mechanism caused the memory shortage.
+and 31,744 cached tokens. The first learned attempt failed during model
+initialization with insufficient profiled GPU memory. After confirming earlier
+research GPU containers were stopped, an unchanged-configuration retry completed
+240/240 measured requests with P50/P95 TTFT of 284.55/1725.84 ms and 30,720 cached
+tokens. The failed initialization is retained and does not establish that the
+learning mechanism caused the memory shortage.
+
+The [deterministic audit](results/prefix_value_gpu_deterministic_20261124.json)
+checks all 480 measured responses, matching effective settings, cache resets and
+16-token outputs. All 240 paired generated texts match. Radix caching remained
+enabled; the learned run recorded 240 observations, 1,212 positive and 328 negative
+labels, and updated weights. This establishes output agreement for the tested
+deterministic configuration and trace, not a general correctness proof or a
+diagnosis of every ordinary-mode text difference. Server arrival order still
+differed in 47/60 waves, so the latency difference is not a controlled estimate of
+policy benefit. The final learned retry ran at `ab8037c`, whose only change since
+the deterministic launcher fix `7722ad5` was the report.
+
+The [local deterministic evidence archive](../../research/sglang-prefix-value/prefix_value_deterministic_20261124_evidence.zip)
+contains both accepted trials and warmups, effective configurations, server logs,
+the failed learned startup and SHA-256 file manifests. It is not stored in Git.
+The prototype, local GPU experiments and reports are delivered; stable latency
+improvement and general starvation bounds have not been established.
 The separate warmup-timeout option remains useful
 for cold compilation, but was not the fix for this admission problem. Do not mix
 these deterministic timings with the ordinary configuration in either table.
