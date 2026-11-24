@@ -1,5 +1,8 @@
 # Experimental prefix retention on SGLang
 
+[中文版时延报告](PREFIX_VALUE_LATENCY_REPORT_ZH.md) includes the latency tables,
+measurement boundaries, concurrent-arrival confounding and latest diagnostic status.
+
 This branch studies prefix retention under limited KV capacity on a single RTX
 4070 Laptop GPU using Qwen3-0.6B. The current implementation is a prototype, not a
 validated serving optimization or a claimed novel cache algorithm.
@@ -293,7 +296,12 @@ retained. No measured result was accepted from either attempt.
 
 The launcher now uses a 4096-token prefill budget **only** for deterministic
 diagnostics, keeping the ordinary experiment's 512 budget unchanged. Corrected
-LRU/learned results are pending. The separate warmup-timeout option remains useful
+LRU completed 240/240 measured requests with P50/P95 TTFT of 288.96/1776.28 ms
+and 31,744 cached tokens. The learned counterpart failed during model
+initialization with insufficient profiled GPU memory and produced no measured
+trial. Output equivalence remains unverified; the failed initialization cannot
+establish that the learning mechanism caused the memory shortage.
+The separate warmup-timeout option remains useful
 for cold compilation, but was not the fix for this admission problem. Do not mix
 these deterministic timings with the ordinary configuration in either table.
 
