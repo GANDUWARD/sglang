@@ -109,8 +109,9 @@ timings include replay bookkeeping and must not be presented as scheduler timing
 
 ## GPU experiment procedure
 
-GPU serving smoke validation passed on 2026-11-23; policy performance comparisons
-remain pending. The local isolated runtime uses PyTorch 2.9.1+cu130, Transformers
+GPU serving smoke validation passed on 2026-11-23; the initial four-policy GPU
+comparison completed on 2026-11-24 (see results below). The local isolated runtime
+uses PyTorch 2.9.1+cu130, Transformers
 4.57.1, FlashInfer 0.5.3 and the official sgl-kernel 0.3.19 CUDA 13 wheel.
 The inherited base image's newer FlashInfer JIT cache caused the first launch to
 fail; disabling system-site-package inheritance fixed that dependency conflict.
@@ -172,6 +173,46 @@ measurement beyond this initial protocol.
 
 Novelty review against RadixAttention, learned prefix caching and newer retention
 policies is still required. CPU reuse improvements alone do not pass that gate.
+
+## Initial GPU comparison (2026-11-24)
+
+The [machine-readable result](results/prefix_value_gpu_20261124.json) records the
+tested commit, image ID, model snapshot, shared settings, trace digest, per-group
+metrics and runtime counters. Each policy completed the same 240-request trace
+after 24 warmup requests and a verified counter reset, with capacity 2048 tokens.
+The observed execution order was learned, LRU, indexed LRU, then frozen.
+
+| Policy | Successful requests | Reused tokens | TTFT P50 (ms) | TTFT P95 (ms) | Observation time (ms total) | Eviction time (ms total) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| LRU | 240/240 | 37,120 | 120.15 | 167.01 | 0 | 37.94 |
+| Indexed LRU | 240/240 | 37,120 | 110.39 | 157.88 | 0 | 34.46 |
+| Frozen value | 240/240 | 37,120 | 110.71 | 155.90 | 61.61 | 99.37 |
+| Learned value | 240/240 | 37,120 | 117.76 | 171.63 | 64.72 | 106.85 |
+
+All policies matched LRU's cached-token count for every request, not only the
+aggregate, and produced identical output text. Each recorded 122 eviction calls
+and 73,136 evicted tokens. Learned and frozen policies each observed 240 logical
+requests, produced 1,212 positive and 328 negative prefix-boundary labels, and
+retained 480 history entries. Learned weights changed to approximately
+`[1.679, 0.895, -2.691, 0.731]`; frozen weights remained zero.
+
+This confirms end-to-end online updates, but **does not establish a performance
+benefit**. Learning did not improve observed reuse and added bookkeeping cost;
+its P95/P99 TTFT were higher than LRU in this run. Indexed LRU's eviction-path
+saving was only about 3.5 ms across the entire trial, so the much larger client
+latency difference cannot be attributed to that saving alone. These are single
+runs with an unrandomized order, one seed, one capacity and sequential arrivals.
+Repeated paired trials, other capacities/arrival patterns and concurrent fairness
+tests remain necessary for broader performance claims. Do not report these
+numbers as serving capacity, measured GPU prefill time, production savings, or
+proof of starvation freedom.
+
+All 37 RadixCache unit tests (including the added indexed/value tests)
+also passed directly under the installed runtime, using its real imports rather
+than the earlier CPU-only HostKVCache import shim. Test allocator tensors remain
+CPU tensors: this strengthens dependency/lifecycle validation, not GPU allocator
+coverage. The earlier 2026-11-23 LRU run is retained separately and was not used
+as the same-day latency comparison.
 
 ## Preliminary related-work gate (2026-11-23)
 
