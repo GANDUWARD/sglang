@@ -152,6 +152,17 @@ python3 benchmark/prefix_value_replay.py --output /tmp/trial-lru --seed 1729
 python3 benchmark/summarize_prefix_value.py /tmp/trial-lru --output /tmp/summary.json
 ```
 
+For a running server, the unified entrypoint checks its policy and actual token
+capacity, waits up to 300 seconds for `/server_info`, replays 24 warmup requests,
+flushes the cache, checks reset research counters, and records a 240-request run:
+
+```sh
+python3 benchmark/run_prefix_value_trial.py --policy lru --capacity 2048 --seed 1729 --output /tmp/trial-lru
+```
+
+It requires fresh trial and warmup output directories and records the reset
+response and counters in `protocol.json`. A failed warmup or replay stops the run.
+
 The client requires a normal length finish, expected output-token count and SSE
 completion marker. Summary generation validates the trace digest and request
 coverage. Same-trace output text mismatches are reported, not silently discarded.
