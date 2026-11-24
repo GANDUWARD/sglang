@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--capacity", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=1)
+    parser.add_argument("--warmup-request-timeout", type=float, default=180)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--url", default="http://127.0.0.1:30000")
     args = parser.parse_args()
@@ -49,7 +50,17 @@ def main():
         str(args.concurrency),
     ]
     subprocess.run(
-        common + ["--count", "24", "--seed", "1729", "--output", str(warmup)],
+        common
+        + [
+            "--count",
+            "24",
+            "--seed",
+            "1729",
+            "--output",
+            str(warmup),
+            "--request-timeout",
+            str(args.warmup_request_timeout),
+        ],
         check=True,
     )
     request = urllib.request.Request(args.url + "/flush_cache", method="POST")
@@ -72,6 +83,7 @@ def main():
                 "policy": args.policy,
                 "capacity": args.capacity,
                 "warmup_count": 24,
+                "warmup_request_timeout_s": args.warmup_request_timeout,
                 "warmup_seed": 1729,
                 "concurrency": args.concurrency,
                 "warmup_directory": str(warmup),

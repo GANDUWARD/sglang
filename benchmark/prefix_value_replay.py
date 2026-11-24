@@ -35,7 +35,7 @@ def make_trace(seed, count):
     return trace
 
 
-def replay_one(url, item, output_tokens):
+def replay_one(url, item, output_tokens, request_timeout=180):
     body = json.dumps(
         {
             "input_ids": item["input_ids"],
@@ -54,7 +54,7 @@ def replay_one(url, item, output_tokens):
     first_token = None
     last = None
     done = False
-    with urllib.request.urlopen(request, timeout=180) as response:
+    with urllib.request.urlopen(request, timeout=request_timeout) as response:
         for line in response:
             if not line.startswith(b"data:"):
                 continue
@@ -96,8 +96,11 @@ def main():
     parser.add_argument("--count", type=int, default=240)
     parser.add_argument("--output-tokens", type=int, default=16)
     parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=1)
+    parser.add_argument("--request-timeout", type=float, default=180)
     parser.add_argument("--trace-only", action="store_true")
     args = parser.parse_args()
+    if not 0 < args.request_timeout <= 1200:
+        parser.error("request-timeout must be in (0, 1200] seconds")
     args.output.mkdir(parents=True, exist_ok=False)
     trace = make_trace(args.seed, args.count)
     encoded = json.dumps(trace, separators=(",", ":")).encode()
@@ -124,6 +127,7 @@ def main():
                 args.output_tokens,
                 args.concurrency,
                 origin,
+                args.request_timeout,
             )
             for result in results:
                 result["wave_id"] = offset // args.concurrency
@@ -134,7 +138,7 @@ def main():
     save_server_info("server-after.json")
 
 
-def replay_wave(url, items, output_tokens, concurrency, origin):
+def replay_wave(url, items, output_tokens, concurrency, origin, request_timeout=180):
     """Finish one wave before admitting the next; retain every outcome on failure.
 
     Actual dispatch offsets are recorded. Network arrival order within a wave is
@@ -144,7 +148,7 @@ def replay_wave(url, items, output_tokens, concurrency, origin):
     def run(item):
         dispatched = time.perf_counter() - origin
         try:
-            result = replay_one(url, item, output_tokens)
+            result = replay_one(url, item, output_tokens, request_timeout)
             result["success"] = True
         except Exception as error:
             result = {

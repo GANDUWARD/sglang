@@ -55,7 +55,7 @@ class TestPrefixValueClient(unittest.TestCase):
         barrier = threading.Barrier(4, timeout=5)
         items = [{"id": i, "group": i, "input_ids": [i]} for i in range(4)]
 
-        def fake_replay(url, item, tokens):
+        def fake_replay(url, item, tokens, request_timeout):
             barrier.wait()
             return {"id": item["id"], "group": item["group"]}
 
@@ -71,7 +71,7 @@ class TestPrefixValueClient(unittest.TestCase):
         barrier = threading.Barrier(2, timeout=5)
         items = [{"id": i, "group": i, "input_ids": [i]} for i in range(2)]
 
-        def fake_replay(url, item, tokens):
+        def fake_replay(url, item, tokens, request_timeout):
             barrier.wait()
             if item["id"] == 0:
                 raise RuntimeError("synthetic stream failure")
