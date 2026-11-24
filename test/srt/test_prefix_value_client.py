@@ -3,12 +3,14 @@
 import io
 import json
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "benchmark"))
-from prefix_value_replay import make_trace, replay_one
+from prefix_value_replay import make_trace, replay_one, replay_wave
 
 
 class TestPrefixValueClient(unittest.TestCase):
@@ -48,6 +50,38 @@ class TestPrefixValueClient(unittest.TestCase):
     def test_trace_is_reproducible(self):
         self.assertEqual(make_trace(1729, 100), make_trace(1729, 100))
         self.assertNotEqual(make_trace(1729, 100), make_trace(1730, 100))
+
+    def test_wave_executes_concurrently_and_retains_id_order(self):
+        barrier = threading.Barrier(4, timeout=5)
+        items = [{"id": i, "group": i, "input_ids": [i]} for i in range(4)]
+
+        def fake_replay(url, item, tokens):
+            barrier.wait()
+            return {"id": item["id"], "group": item["group"]}
+
+        with patch("prefix_value_replay.replay_one", side_effect=fake_replay):
+            rows = replay_wave("unused", items, 2, 4, time.perf_counter())
+        self.assertEqual([r["id"] for r in rows], list(range(4)))
+        self.assertTrue(all(r["success"] for r in rows))
+        self.assertTrue(
+            all(r["completion_offset_s"] >= r["dispatch_offset_s"] for r in rows)
+        )
+
+    def test_failed_wave_preserves_successful_peer_outcomes(self):
+        barrier = threading.Barrier(2, timeout=5)
+        items = [{"id": i, "group": i, "input_ids": [i]} for i in range(2)]
+
+        def fake_replay(url, item, tokens):
+            barrier.wait()
+            if item["id"] == 0:
+                raise RuntimeError("synthetic stream failure")
+            return {"id": item["id"], "group": item["group"]}
+
+        with patch("prefix_value_replay.replay_one", side_effect=fake_replay):
+            rows = replay_wave("unused", items, 2, 2, time.perf_counter())
+        self.assertFalse(rows[0]["success"])
+        self.assertIn("synthetic stream failure", rows[0]["error"])
+        self.assertTrue(rows[1]["success"])
 
 
 if __name__ == "__main__":

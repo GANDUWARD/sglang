@@ -164,6 +164,24 @@ python3 benchmark/run_prefix_value_trial.py --policy lru --capacity 2048 --seed 
 It requires fresh trial and warmup output directories and records the reset
 response and counters in `protocol.json`. A failed warmup or replay stops the run.
 
+`--concurrency 4` runs fixed waves of up to four requests, waiting for each wave
+to finish before submitting the next. Warmup uses the same concurrency. Every
+request records actual client dispatch/completion offsets; within-wave network
+arrival order can vary. All outcomes in a failed wave are saved before stopping.
+This tests bounded concurrent cache pressure, not sustained overload or maximum
+capacity. Summaries include maximum TTFT, end-to-end P95/maximum, and scheduler
+queue-time P95/maximum for every prefix group. Missing queue metadata is marked,
+not silently treated as zero. Output comparisons are grouped by both trace and
+concurrency because different batching can change numerical execution.
+
+For this local setup, `run_prefix_value_followups.ps1 -OutputRoot <new-directory>`
+reuses the four existing research containers at the recorded image ID. It runs a
+second sequential pass in reverse policy order and then a four-policy wave-4
+pass. It pins seed 1729/capacity 2048, requires a clean committed checkout, saves
+the plan and container logs, stops each server in a finally block, and validates
+the completed replays. These follow-up results are not included in the initial
+single-run table below until the matrix actually completes.
+
 The client requires a normal length finish, expected output-token count and SSE
 completion marker. Summary generation validates the trace digest and request
 coverage. Same-trace output text mismatches are reported, not silently discarded.

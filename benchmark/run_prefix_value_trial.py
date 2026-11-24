@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--policy", required=True)
     parser.add_argument("--capacity", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=1729)
+    parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--url", default="http://127.0.0.1:30000")
     args = parser.parse_args()
@@ -39,7 +40,14 @@ def main():
     assert len(states) == 1, "Only single-worker experiments are supported"
     assert states[0]["memory_usage"]["token_capacity"] == args.capacity
     replay = Path(__file__).with_name("prefix_value_replay.py")
-    common = [sys.executable, str(replay), "--url", args.url]
+    common = [
+        sys.executable,
+        str(replay),
+        "--url",
+        args.url,
+        "--concurrency",
+        str(args.concurrency),
+    ]
     subprocess.run(
         common + ["--count", "24", "--seed", "1729", "--output", str(warmup)],
         check=True,
@@ -65,6 +73,7 @@ def main():
                 "capacity": args.capacity,
                 "warmup_count": 24,
                 "warmup_seed": 1729,
+                "concurrency": args.concurrency,
                 "warmup_directory": str(warmup),
                 "flush_response": flush_result,
                 "reset_stats": stats,

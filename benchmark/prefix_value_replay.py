@@ -1,4 +1,4 @@
-"""Sequential synthetic token replay for paired prefix-cache experiments.
+"""Sequential or bounded-wave token replay for prefix-cache experiments.
 
 Use a fresh server for each policy/repeat. Identical seed produces identical
 input IDs. This measures low-concurrency cache competition, not serving capacity.
@@ -10,6 +10,7 @@ import json
 import random
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -94,6 +95,7 @@ def main():
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--count", type=int, default=240)
     parser.add_argument("--output-tokens", type=int, default=16)
+    parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--trace-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -113,19 +115,52 @@ def main():
         (args.output / name).write_text(json.dumps(info, indent=2))
 
     save_server_info("server-before.json")
+    origin = time.perf_counter()
     with (args.output / "requests.jsonl").open("w", encoding="utf-8") as log:
-        for item in trace:
-            try:
-                result = replay_one(args.url, item, args.output_tokens)
-                result["success"] = True
-            except Exception as error:
-                result = {"id": item["id"], "success": False, "error": repr(error)}
+        for offset in range(0, len(trace), args.concurrency):
+            results = replay_wave(
+                args.url,
+                trace[offset : offset + args.concurrency],
+                args.output_tokens,
+                args.concurrency,
+                origin,
+            )
+            for result in results:
+                result["wave_id"] = offset // args.concurrency
                 log.write(json.dumps(result) + "\n")
                 log.flush()
-                raise
-            log.write(json.dumps(result) + "\n")
-            log.flush()
+            if any(not result["success"] for result in results):
+                raise RuntimeError("Replay wave failed; all wave outcomes were saved")
     save_server_info("server-after.json")
+
+
+def replay_wave(url, items, output_tokens, concurrency, origin):
+    """Finish one wave before admitting the next; retain every outcome on failure.
+
+    Actual dispatch offsets are recorded. Network arrival order within a wave is
+    not deterministic. This is bounded concurrency, not an open-loop load test.
+    """
+
+    def run(item):
+        dispatched = time.perf_counter() - origin
+        try:
+            result = replay_one(url, item, output_tokens)
+            result["success"] = True
+        except Exception as error:
+            result = {
+                "id": item["id"],
+                "group": item["group"],
+                "success": False,
+                "error": repr(error),
+            }
+        result["dispatch_offset_s"] = dispatched
+        result["completion_offset_s"] = time.perf_counter() - origin
+        return result
+
+    if concurrency == 1:
+        return [run(item) for item in items]
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        return list(pool.map(run, items))
 
 
 if __name__ == "__main__":

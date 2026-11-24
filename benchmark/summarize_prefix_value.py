@@ -51,11 +51,24 @@ def summarize(path):
         groups[str(row["group"])].append(row)
 
     def metrics(records):
+        queue_times = [
+            r["meta_info"]["queue_time"]
+            for r in records
+            if "queue_time" in r["meta_info"]
+        ]
+        if any(not math.isfinite(value) or value < 0 for value in queue_times):
+            raise ValueError(f"Invalid scheduler queue time: {path}")
         return {
             "requests": len(records),
             "ttft_p50_s": percentile([r["ttft_s"] for r in records], 0.5),
             "ttft_p95_s": percentile([r["ttft_s"] for r in records], 0.95),
             "ttft_p99_s": percentile([r["ttft_s"] for r in records], 0.99),
+            "ttft_max_s": max(r["ttft_s"] for r in records),
+            "latency_p95_s": percentile([r["latency_s"] for r in records], 0.95),
+            "latency_max_s": max(r["latency_s"] for r in records),
+            "queue_time_p95_s": percentile(queue_times, 0.95) if queue_times else None,
+            "queue_time_max_s": max(queue_times) if queue_times else None,
+            "queue_time_field_present": len(queue_times) == len(records),
             "cached_tokens": sum(
                 r["meta_info"].get("cached_tokens", 0) for r in records
             ),
@@ -67,7 +80,8 @@ def summarize(path):
     return {
         "path": str(path),
         "trace_sha256": config["trace_sha256"],
-        "measurement": "client-observed sequential replay, not serving capacity",
+        "concurrency": config.get("concurrency", 1),
+        "measurement": "client-observed bounded-wave replay, not serving capacity or starvation proof",
         "all": metrics(rows),
         "groups": {k: metrics(v) for k, v in groups.items()},
         "server_before": before,
@@ -84,7 +98,7 @@ def main():
     references = {}
     for path in args.trials:
         summary, rows = summarize(path)
-        digest = summary["trace_sha256"]
+        digest = (summary["trace_sha256"], summary["concurrency"])
         outputs = [r["output_text"] for r in rows]
         if digest in references:
             summary["output_text_mismatches_vs_first_same_trace"] = sum(
