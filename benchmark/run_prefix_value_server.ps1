@@ -5,12 +5,14 @@ param(
     [int]$Port = 30000,
     [string]$Image = 'lmsysorg/sglang:v0.5.6.post2',
     [string]$PythonExecutable = 'python3',
-    [string]$ModelPath = 'Qwen/Qwen3-0.6B'
+    [string]$ModelPath = 'Qwen/Qwen3-0.6B',
+    [switch]$DeterministicInference
 )
 $ErrorActionPreference = 'Stop'
 $dockerPath = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 $sourcePath = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $containerName = "sglang-prefix-$Policy-$CacheTokens"
+if ($DeterministicInference) { $containerName += '-deterministic' }
 $arguments = @(
     'run', '-d', '--name', $containerName, '--gpus', 'all', '--shm-size', '2g',
     '-p', "127.0.0.1:${Port}:30000",
@@ -25,6 +27,7 @@ $arguments = @(
     '--disable-cuda-graph', '--attention-backend', 'triton',
     '--radix-eviction-policy', $Policy, '--enable-metrics', '--random-seed', '1729'
 )
+if ($DeterministicInference) { $arguments += '--enable-deterministic-inference' }
 & $dockerPath @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Server container creation failed' }
 Write-Output "Started $containerName; verify readiness and logs before replay."
