@@ -232,6 +232,60 @@ CPU tensors: this strengthens dependency/lifecycle validation, not GPU allocator
 coverage. The earlier 2026-11-23 LRU run is retained separately and was not used
 as the same-day latency comparison.
 
+## Repeated and concurrent GPU follow-ups (2026-11-24)
+
+The [follow-up audit](results/prefix_value_gpu_followups_20261124.json) covers a
+second sequential pass in reverse policy order and one wave-4 pass, all at seed
+1729 and capacity 2048. These eight trials completed 1,920/1,920 measured requests.
+The source was pinned to `94bf350`; model, runtime image and effective settings
+were checked. Client tests were extended to seven cases, including actual thread
+overlap and preserving peer outcomes when one stream fails.
+
+| Policy | Sequential repeat TTFT P95 (ms) | Sequential reused tokens | Wave-4 TTFT P95 (ms) | Wave-4 reused tokens | Wave-4 text differences vs LRU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LRU | 158.72 | 37,120 | 869.32 | 34,208 | reference |
+| Indexed LRU | 145.81 | 37,120 | 903.36 | 32,624 | 23/240 |
+| Frozen value | 147.09 | 37,120 | 886.51 | 32,144 | 19/240 |
+| Learned value | 151.71 | 37,120 | 896.64 | 38,624 | 27/240 |
+
+Sequential output text again matched across policies. Learned P95 was worse than
+LRU in the first pass and better in the second; reuse remained identical. This
+does not establish a stable latency benefit. Indexed LRU's total eviction time
+was 35.68 ms versus LRU's 39.82 ms in the repeat, a small absolute difference.
+
+Concurrent runs are **not controlled arrival-order comparisons**. Among 60 waves,
+server arrival order differed from LRU in 47 indexed, 39 frozen, and 50 learned
+waves. Do not attribute the learned run's extra reused tokens solely to learning.
+Its P95 TTFT was higher than LRU despite the extra reuse. All runs had zero
+reported retractions, all prefix groups completed, and maximum reported scheduler
+queue times were respectively 0.884, 0.837, 0.830 and 0.780 seconds for LRU,
+indexed, frozen and learned. Group P95s sometimes regressed substantially; the
+audit retains them. Some groups have only four requests, so their percentile
+estimates are weak. Finite completion is not a starvation bound or an SLO result.
+
+A separate LRU-against-itself wave-4 repeat also completed 240/240 requests, but
+produced 21 text differences and 50/60 changed arrival orders. Reuse changed from
+34,208 to 32,112 tokens, and P95 TTFT from 869.32 to 971.31 ms. Its maximum client
+TTFT was 5.393 seconds, while maximum scheduler queue time was 0.896 seconds;
+the client stall is retained without claiming a cause. This demonstrates baseline
+variability, but does **not** by itself prove that every policy-related text
+difference is harmless. Concurrent output equivalence remains unverified.
+
+`analyze_prefix_value_campaign.py <trial-directories...> --output <new-json>`
+validates full response coverage, matching settings and reset counters, and uses
+the first LRU run for each trace/concurrency/capacity/backend/determinism group.
+It records output-difference IDs, per-group timings, retractions and server
+arrival-order differences. It never compares deterministic and ordinary runs as
+one configuration.
+
+The launcher now accepts `-DeterministicInference` for a separate correctness
+diagnostic using the pinned version's Triton batch-invariant path and PyTorch
+sampler. The initial diagnostic failed during long-input cold compilation at the
+180-second client timeout; all four failed warmup outcomes were retained and no
+measured trial was accepted. A retry uses `--warmup-request-timeout 600`, with the
+measured replay timeout unchanged at 180 seconds. Its result is pending and is
+not part of either table above.
+
 ## Preliminary related-work gate (2026-11-23)
 
 The following primary publication pages and abstracts were checked. This is an
