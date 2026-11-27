@@ -4,12 +4,16 @@ import argparse
 import json
 from pathlib import Path
 
-from summarize_prefix_value import summarize
+from summarize_prefix_value import percentile, summarize
 
 
 def audit(root):
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8-sig"))
-    expected_order = ["default", "frozen", "fast", "fast", "frozen", "default"]
+    study = plan.get("Study", "learner")
+    expected_order = {
+        "learner": ["default", "frozen", "fast", "fast", "frozen", "default"],
+        "value": ["full", "no_depth", "no_depth", "full"],
+    }[study]
     assert [entry["Label"] for entry in plan["Order"]] == expected_order
     assert plan["Concurrency"] == 1 and plan["Seed"] == 1735
     common_fields = (
@@ -42,6 +46,9 @@ def audit(root):
             stats = internal["prefix_value_research"]
             assert stats["policy"] == state["radix_eviction_policy"] == case["Policy"]
             assert stats["learning_rate"] == state["prefix_value_learning_rate"] == case["Rate"]
+            if study == "value":
+                assert stats["value_formula"] == state["prefix_value_formula"] == case["Formula"] == case["Label"]
+                assert case["Rate"] == 0.03 and case["Policy"] == "reuse_value"
             if when == "server_before":
                 assert stats["observations"] == stats["eviction_calls"] == 0
                 assert stats["predictor_weights"] == [0] * 4
@@ -52,10 +59,18 @@ def audit(root):
         if reference is None:
             reference = requests
             reference_trace = summary["trace_sha256"]
+            reference_learning = {field: stats[field] for field in ("predictor_weights", "positive_labels", "negative_labels", "censored_labels")}
+        if study == "value":
+            assert all(stats[field] == value for field, value in reference_learning.items())
         assert summary["trace_sha256"] == reference_trace
+        arrivals = [r["meta_info"]["request_received_ts"] for r in requests]
+        gaps = [b - a for a, b in zip(arrivals, arrivals[1:])]
+        assert all(gap > 0 for gap in gaps)
         rows.append({
             "trial": path.name, "policy": case["Policy"], "rate": case["Rate"],
             "metrics": summary["all"], "groups": summary["groups"], "stats": stats,
+            "interarrival_s": {key: percentile(gaps, q) for key, q in
+                               (("p10", 0.10), ("p50", 0.50), ("p90", 0.90))},
             "text_difference_ids_vs_first": [
                 r["id"] for r, b in zip(requests, reference) if r["output_text"] != b["output_text"]
             ],

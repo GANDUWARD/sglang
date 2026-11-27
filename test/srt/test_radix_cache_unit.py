@@ -17,6 +17,7 @@ Usage:
     python -m pytest test_radix_cache_unit.py::TestRadixCache::test_insert_basic
 """
 
+import math
 import time
 import unittest
 import unittest.mock
@@ -643,7 +644,7 @@ class TestRadixCache(unittest.TestCase):
 
 
 class TestIndexedLRU(unittest.TestCase):
-    def make_cache(self, policy):
+    def make_cache(self, policy, **kwargs):
         from sglang.srt.mem_cache.cache_init_params import CacheInitParams
 
         allocator = unittest.mock.Mock()
@@ -655,6 +656,7 @@ class TestIndexedLRU(unittest.TestCase):
                 token_to_kv_pool_allocator=allocator,
                 page_size=1,
                 eviction_policy=policy,
+                **kwargs,
             )
         )
 
@@ -726,6 +728,149 @@ class TestIndexedLRU(unittest.TestCase):
         cache.evict(1000)
         self.assertEqual(cache.total_size(), 0)
         self.assertGreater(len(cache.reuse_model.records), 0)
+
+    def test_value_formula_equations_preserve_predictor_inputs(self):
+        from types import SimpleNamespace
+
+        tokens = list(range(128))
+        for formula in ("full", "no_depth", "no_decay", "no_bonus"):
+            with self.subTest(formula=formula):
+                cache = self.make_cache("reuse_value", prefix_value_formula=formula)
+                cache.observe_request(
+                    SimpleNamespace(origin_input_ids=tokens, extra_key=None)
+                )
+                cache.insert(RadixKey(tokens), torch.tensor(tokens))
+                for _ in range(8):
+                    cache.reuse_model.observe({})
+                model = cache.reuse_model
+                model.weights = [0.2, 0.3, -0.4, 0.5]
+                leaf = cache._collect_leaves()[0]
+                leaf.last_access_time = 10.0
+                identity = next(reversed(model.records))
+                features = model._features(model.records[identity], 128)
+                probability = model._probability(model.weights, features)
+                cost = 1.0 if formula == "no_depth" else 1.0 + 128 / 4096.0
+                decay = 1.0 if formula == "no_decay" else math.exp(-8 / 64)
+                bonus = (
+                    0.0
+                    if formula == "no_bonus"
+                    else min(probability * decay * cost, 1.0)
+                )
+                with unittest.mock.patch.object(
+                    model, "_probability", wraps=model._probability
+                ) as predict:
+                    score = cache._eviction_priority(leaf)
+                self.assertEqual(score, 10.0 + bonus)
+                if formula == "no_bonus":
+                    predict.assert_not_called()
+                else:
+                    self.assertEqual(predict.call_args.args[1], features)
+                    self.assertGreater(features[3], 0.0)
+                if formula == "full":
+                    # Exact arithmetic equivalence to the pre-ablation formula.
+                    legacy = 10.0 + min(
+                        probability * math.exp(-8 / 64) * (1.0 + 128 / 4096.0) / 1.0,
+                        1.0,
+                    )
+                    self.assertEqual(score, legacy)
+
+    def test_value_formula_changes_actual_leaf_eviction_order(self):
+        long_tokens = list(range(512))
+        short_tokens = list(range(1000, 1064))
+        for formula in ("full", "no_depth", "no_decay", "no_bonus"):
+            with self.subTest(formula=formula):
+                cache = self.make_cache(
+                    "reuse_value_frozen", prefix_value_formula=formula
+                )
+                cache.insert(RadixKey(long_tokens), torch.tensor(long_tokens))
+                cache.insert(RadixKey(short_tokens), torch.tensor(short_tokens))
+                leaves = {len(node.key): node for node in cache._collect_leaves()}
+                leaves[512].last_access_time = 10.0
+                leaves[64].last_access_time = 10.01
+                expected_evicted_length = 64 if formula in ("full", "no_decay") else 512
+                cache.evict(1)
+                freed = cache.token_to_kv_pool_allocator.free.call_args.args[0]
+                self.assertEqual(len(freed), expected_evicted_length)
+                self.assert_index_matches_tree(cache)
+
+    def test_no_decay_removes_only_external_age_ranking(self):
+        from types import SimpleNamespace
+
+        first, second = list(range(64)), list(range(1000, 1064))
+        for formula, expected_first in (("full", True), ("no_decay", False)):
+            cache = self.make_cache("reuse_value_frozen", prefix_value_formula=formula)
+            cache.observe_request(
+                SimpleNamespace(origin_input_ids=first, extra_key=None)
+            )
+            for _ in range(64):
+                cache.reuse_model.observe({})
+            cache.observe_request(
+                SimpleNamespace(origin_input_ids=second, extra_key=None)
+            )
+            cache.insert(RadixKey(first), torch.tensor(first))
+            cache.insert(RadixKey(second), torch.tensor(second))
+            leaves = {node.key.token_ids[0]: node for node in cache._collect_leaves()}
+            leaves[0].last_access_time = 10.02
+            leaves[1000].last_access_time = 10.0
+            self.assertEqual(
+                cache._eviction_priority(leaves[0])
+                < cache._eviction_priority(leaves[1000]),
+                expected_first,
+            )
+
+    def test_all_value_formulas_keep_one_second_bonus_cap(self):
+        tokens = list(range(8192))
+        for formula in ("full", "no_depth", "no_decay", "no_bonus"):
+            cache = self.make_cache("reuse_value_frozen", prefix_value_formula=formula)
+            cache.insert(RadixKey(tokens), torch.tensor(tokens))
+            leaf = cache._collect_leaves()[0]
+            leaf.last_access_time = 10.0
+            cache.reuse_model.weights = [20.0, 0.0, 0.0, 0.0]
+            score = cache._eviction_priority(leaf)
+            self.assertGreaterEqual(score, 10.0)
+            self.assertLessEqual(score, 11.0)
+            if formula in ("full", "no_decay"):
+                self.assertEqual(score, 11.0)
+            elif formula == "no_bonus":
+                self.assertEqual(score, 10.0)
+
+    def test_value_formula_keeps_observation_learning_and_stats(self):
+        from types import SimpleNamespace
+
+        formulas = ("full", "no_depth", "no_decay", "no_bonus")
+        caches = [
+            self.make_cache(
+                "reuse_value",
+                prefix_value_formula=formula,
+                prefix_value_learning_rate=0.1,
+            )
+            for formula in formulas
+        ]
+        for tokens in [list(range(128))] * 3 + [[]] * 65:
+            for cache in caches:
+                cache.observe_request(
+                    SimpleNamespace(origin_input_ids=tokens, extra_key=None)
+                )
+            first = caches[0].reuse_model
+            for cache in caches[1:]:
+                model = cache.reuse_model
+                self.assertEqual(model.weights, first.weights)
+                self.assertEqual(model.records, first.records)
+                self.assertEqual(model.pending, first.pending)
+                self.assertEqual(model.positive_labels, first.positive_labels)
+                self.assertEqual(model.negative_labels, first.negative_labels)
+        self.assertGreater(first.positive_labels, 0)
+        self.assertGreater(first.negative_labels, 0)
+        for cache, formula in zip(caches, formulas):
+            stats = cache.get_research_stats()
+            self.assertEqual(stats["value_formula"], formula)
+            self.assertEqual(stats["learning_rate"], 0.1)
+            self.assertEqual(stats["observations"], 68)
+        self.assertEqual(self.make_cache("reuse_value").prefix_value_formula, "full")
+        with self.assertRaises(ValueError):
+            self.make_cache("reuse_value", prefix_value_formula="typo")
+        with self.assertRaises(ValueError):
+            self.make_cache("lru", prefix_value_formula="no_depth")
 
 
 if __name__ == "__main__":

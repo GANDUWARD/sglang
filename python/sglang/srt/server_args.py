@@ -307,6 +307,7 @@ class ServerArgs:
     disable_hybrid_swa_memory: bool = False
     radix_eviction_policy: str = "lru"
     prefix_value_learning_rate: float = 0.03
+    prefix_value_formula: str = "full"
 
     # Runtime options
     device: Optional[str] = None
@@ -2491,6 +2492,15 @@ class ServerArgs:
             type=float,
             default=ServerArgs.prefix_value_learning_rate,
             help="SGD step size for the experimental reuse_value radix policy.",
+        )
+        parser.add_argument(
+            "--prefix-value-formula",
+            choices=["full", "no_depth", "no_decay", "no_bonus"],
+            default=ServerArgs.prefix_value_formula,
+            help="Value-formula ablation for reuse_value/reuse_value_frozen. "
+            "no_depth removes only the external depth cost; no_decay removes "
+            "only external request-age decay; no_bonus uses LRU scores while "
+            "keeping observations and learning. Predictor inputs stay unchanged.",
         )
 
         # Runtime options

@@ -8,6 +8,7 @@ param(
     [string]$ModelPath = 'Qwen/Qwen3-0.6B',
     [switch]$DeterministicInference,
     [double]$LearningRate = 0.03,
+    [ValidateSet('full', 'no_depth', 'no_decay', 'no_bonus')][string]$ValueFormula = 'full',
     [ValidatePattern('^[a-z0-9-]+$')][string]$TrialTag
 )
 $ErrorActionPreference = 'Stop'
@@ -38,6 +39,7 @@ $arguments = @(
 )
 if ($Policy -in @('reuse_value', 'reuse_value_frozen')) {
     $arguments += @('--prefix-value-learning-rate', $LearningRate.ToString([cultureinfo]::InvariantCulture))
+    $arguments += @('--prefix-value-formula', $ValueFormula)
 }
 if ($DeterministicInference) { $arguments += '--enable-deterministic-inference' }
 & $dockerPath @arguments

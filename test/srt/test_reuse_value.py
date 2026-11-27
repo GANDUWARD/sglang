@@ -1,6 +1,7 @@
 """Dependency-free tests of delayed feedback and bounded learner state."""
 
 import importlib.util
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -74,6 +75,35 @@ class TestOnlineReuseValue(unittest.TestCase):
         self.assertEqual(model.records["a"].interval, 2)
         self.assertEqual(model.records["a"].features[2], 0.25)
         self.assertNotEqual(model.weights[2], 0.0)
+
+    def test_optional_external_decay_preserves_probability_and_default_arithmetic(self):
+        model = OnlineReuseValue(horizon=8)
+        model.observe({"a": 128})
+        for _ in range(3):
+            model.observe({})
+        model.weights = [0.2, 0.3, -0.4, 0.5]
+        features = model._features(model.records["a"], 128)
+        probability = model._probability(model.weights, features)
+        legacy = probability * math.exp(-3 / 8) * 2.0 / 4.0
+        self.assertEqual(model.retention_value("a", 128, 2.0, 4.0), legacy)
+        self.assertEqual(
+            model.retention_value("a", 128, 2.0, 4.0, apply_recency_decay=True), legacy
+        )
+        self.assertEqual(
+            model.retention_value("a", 128, 2.0, 4.0, apply_recency_decay=False),
+            probability * 2.0 / 4.0,
+        )
+        self.assertEqual(model._features(model.records["a"], 128), features)
+
+    def test_no_decay_keeps_depth_as_a_probability_input(self):
+        model = OnlineReuseValue(learn=False)
+        model.weights = [0.0, 0.0, 0.0, 2.0]
+        shallow = model.retention_value(None, 64, 1.0, 1.0, apply_recency_decay=False)
+        deep = model.retention_value(None, 4096, 1.0, 1.0, apply_recency_decay=False)
+        self.assertGreater(deep, shallow)
+        self.assertAlmostEqual(
+            model.retention_value(None, 64, 1.0, 1.0), shallow * math.exp(-1)
+        )
 
 
 if __name__ == "__main__":

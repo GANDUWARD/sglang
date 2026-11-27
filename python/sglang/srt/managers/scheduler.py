@@ -732,6 +732,7 @@ class Scheduler(
             ),
             eviction_policy=server_args.radix_eviction_policy,
             prefix_value_learning_rate=server_args.prefix_value_learning_rate,
+            prefix_value_formula=server_args.prefix_value_formula,
             enable_metrics=self.enable_metrics,
             enable_kv_cache_events=self.enable_kv_cache_events,
         )
