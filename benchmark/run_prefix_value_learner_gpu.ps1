@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$OutputRoot,
-    [string]$PythonExecutable = 'C:\Users\ASUS\anaconda3\envs\python\python.exe'
+    [string]$PythonExecutable = 'C:\Users\ASUS\anaconda3\envs\python\python.exe',
+    [ValidateSet('learner', 'value')][string]$Study = 'learner'
 )
 $ErrorActionPreference = 'Stop'
 $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
@@ -18,9 +19,16 @@ $conditions = @(
 $imageID = & $docker image inspect $image --format '{{.Id}}'
 if ($LASTEXITCODE -ne 0) { throw 'Missing research image.' }
 $order = @(0,1,2,2,1,0)
+if ($Study -eq 'value') {
+    $conditions = @(
+        @{ Policy='reuse_value'; Rate=0.03; Label='full'; Formula='full' },
+        @{ Policy='reuse_value'; Rate=0.03; Label='no_depth'; Formula='no_depth' }
+    )
+    $order = @(0,1,1,0)
+}
 $paths = @()
 $commit = & git -C $repo rev-parse HEAD
-@{ Seed=1735; Concurrency=1; Capacity=2048; Image=$imageID; Source=$commit;
+@{ Study=$Study; Seed=1735; Concurrency=1; Capacity=2048; Image=$imageID; Source=$commit;
    Order=@($order | ForEach-Object { $conditions[$_] }); Model=$snapshot } |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'plan.json') -Encoding utf8
 for ($i=0; $i -lt $order.Count; $i++) {
@@ -29,9 +37,10 @@ for ($i=0; $i -lt $order.Count; $i++) {
     $paths += $trial
     $trialTag = "$tag-$i"
     $name = "sglang-prefix-$($case.Policy)-2048-$trialTag"
-    & (Join-Path $PSScriptRoot 'run_prefix_value_server.ps1') -Policy $case.Policy -CacheTokens 2048 -Port 30127 -Image $image -PythonExecutable /opt/sglang-research/bin/python -ModelPath $snapshot -LearningRate $case.Rate -TrialTag $trialTag
+    $formula = if ($case.ContainsKey('Formula')) { $case.Formula } else { 'full' }
+    & (Join-Path $PSScriptRoot 'run_prefix_value_server.ps1') -Policy $case.Policy -CacheTokens 2048 -Port 30127 -Image $image -PythonExecutable /opt/sglang-research/bin/python -ModelPath $snapshot -LearningRate $case.Rate -ValueFormula $formula -TrialTag $trialTag
     try {
-        & $PythonExecutable (Join-Path $PSScriptRoot 'run_prefix_value_trial.py') --policy $case.Policy --capacity 2048 --seed 1735 --url 'http://127.0.0.1:30127' --expected-learning-rate $case.Rate --output $trial
+        & $PythonExecutable (Join-Path $PSScriptRoot 'run_prefix_value_trial.py') --policy $case.Policy --capacity 2048 --seed 1735 --url 'http://127.0.0.1:30127' --expected-learning-rate $case.Rate --expected-value-formula $formula --output $trial
         if ($LASTEXITCODE -ne 0) { throw "Failed measurement at $trial" }
     } finally {
         try { & $docker logs $name *> "$trial-container.log" }
