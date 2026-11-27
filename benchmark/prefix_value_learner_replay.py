@@ -91,7 +91,7 @@ def check_cache(cache, capacity):
     return total
 
 
-def replay(trace, capacity, interval, configuration):
+def replay(trace, capacity, interval, configuration, *, prefix_value_formula=None):
     name, policy, learning_rate = configuration
     if not trace or max(len(item["input_ids"]) for item in trace) > capacity:
         raise ValueError("Each request must fit in the non-empty replay cache")
@@ -113,6 +113,11 @@ def replay(trace, capacity, interval, configuration):
     allocator.free.side_effect = record_free
     started = time.perf_counter()
     try:
+        extra_params = (
+            {"prefix_value_formula": prefix_value_formula}
+            if prefix_value_formula is not None
+            else {}
+        )
         cache = RadixCache(
             CacheInitParams(
                 disable=False,
@@ -120,6 +125,7 @@ def replay(trace, capacity, interval, configuration):
                 token_to_kv_pool_allocator=allocator,
                 page_size=1,
                 eviction_policy=policy,
+                **extra_params,
             )
         )
         # RadixCache construction calls reset(), which creates its learner.
@@ -222,7 +228,7 @@ def paired_summary(baseline, candidate):
         for baseline_row, candidate_row in zip(baseline["requests"], candidate["requests"])
     ]
     return {
-        "baseline": "frozen",
+        "baseline": baseline["configuration"],
         "configuration": candidate["configuration"],
         "learning_rate": candidate["learning_rate"],
         "baseline_reused_tokens": base,
