@@ -43,7 +43,12 @@ for ($i=0; $i -lt $order.Count; $i++) {
         & $PythonExecutable (Join-Path $PSScriptRoot 'run_prefix_value_trial.py') --policy $case.Policy --capacity 2048 --seed 1735 --url 'http://127.0.0.1:30127' --expected-learning-rate $case.Rate --expected-value-formula $formula --output $trial
         if ($LASTEXITCODE -ne 0) { throw "Failed measurement at $trial" }
     } finally {
-        try { & $docker logs $name *> "$trial-container.log" }
+        try {
+            # Windows PowerShell 5 treats native stderr as a terminating error
+            # under 'Stop', even when Docker successfully returns server logs.
+            $logger = Start-Process -FilePath $docker -ArgumentList @('logs', $name) -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$trial-container.log" -RedirectStandardError "$trial-container.stderr.log"
+            if ($logger.ExitCode -ne 0) { throw "Failed to collect logs from $name" }
+        }
         finally { & $docker stop $name }
     }
 }
