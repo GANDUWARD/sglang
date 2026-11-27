@@ -6,7 +6,9 @@ param(
     [string]$Image = 'lmsysorg/sglang:v0.5.6.post2',
     [string]$PythonExecutable = 'python3',
     [string]$ModelPath = 'Qwen/Qwen3-0.6B',
-    [switch]$DeterministicInference
+    [switch]$DeterministicInference,
+    [double]$LearningRate = 0.03,
+    [ValidatePattern('^[a-z0-9-]+$')][string]$TrialTag
 )
 $ErrorActionPreference = 'Stop'
 $dockerPath = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
@@ -19,6 +21,7 @@ if ($DeterministicInference) {
     # A smaller budget can leave long prompts permanently unadmitted.
     $chunkedPrefillSize = 4096
 }
+if ($TrialTag) { $containerName += "-$TrialTag" }
 $arguments = @(
     'run', '-d', '--name', $containerName, '--gpus', 'all', '--shm-size', '2g',
     '-p', "127.0.0.1:${Port}:30000",
@@ -33,6 +36,9 @@ $arguments = @(
     '--disable-cuda-graph', '--attention-backend', 'triton',
     '--radix-eviction-policy', $Policy, '--enable-metrics', '--random-seed', '1729'
 )
+if ($Policy -in @('reuse_value', 'reuse_value_frozen')) {
+    $arguments += @('--prefix-value-learning-rate', $LearningRate.ToString([cultureinfo]::InvariantCulture))
+}
 if ($DeterministicInference) { $arguments += '--enable-deterministic-inference' }
 & $dockerPath @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Server container creation failed' }

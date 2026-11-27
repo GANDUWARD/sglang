@@ -306,6 +306,7 @@ class ServerArgs:
     swa_full_tokens_ratio: float = 0.8
     disable_hybrid_swa_memory: bool = False
     radix_eviction_policy: str = "lru"
+    prefix_value_learning_rate: float = 0.03
 
     # Runtime options
     device: Optional[str] = None
@@ -2483,6 +2484,13 @@ class ServerArgs:
             choices=RADIX_EVICTION_POLICY_CHOICES,
             default=ServerArgs.radix_eviction_policy,
             help="The eviction policy of radix trees. 'lru' stands for Least Recently Used, 'lfu' stands for Least Frequently Used.",
+        )
+
+        parser.add_argument(
+            "--prefix-value-learning-rate",
+            type=float,
+            default=ServerArgs.prefix_value_learning_rate,
+            help="SGD step size for the experimental reuse_value radix policy.",
         )
 
         # Runtime options

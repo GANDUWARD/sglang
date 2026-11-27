@@ -260,6 +260,7 @@ class RadixCache(BasePrefixCache):
         self.is_eagle = params.is_eagle
         self.disable_finished_insert = params.disable_finished_insert
         self.eviction_policy = params.eviction_policy.lower()
+        self.prefix_value_learning_rate = params.prefix_value_learning_rate
 
         self.kv_event_queue = []
 
@@ -324,7 +325,10 @@ class RadixCache(BasePrefixCache):
         # Index structural leaves, including locked ones; filter locks at eviction.
         self._leaf_index = set() if self._research_policy else None
         self.reuse_model = (
-            OnlineReuseValue(learn=self.eviction_policy == "reuse_value")
+            OnlineReuseValue(
+                learn=self.eviction_policy == "reuse_value",
+                learning_rate=self.prefix_value_learning_rate,
+            )
             if self.eviction_policy in ("reuse_value", "reuse_value_frozen")
             else None
         )
@@ -577,6 +581,7 @@ class RadixCache(BasePrefixCache):
         if self.reuse_model is not None:
             model = self.reuse_model
             result.update(
+                learning_rate=model.learning_rate,
                 positive_labels=model.positive_labels,
                 negative_labels=model.negative_labels,
                 censored_labels=model.censored_labels,

@@ -34,7 +34,7 @@ class ReuseRecord:
 
 class OnlineReuseValue:
     def __init__(self, horizon=64, capacity=4096, learning_rate=0.03, learn=True):
-        if horizon < 1 or capacity < 1 or learning_rate <= 0:
+        if horizon < 1 or capacity < 1 or not math.isfinite(learning_rate) or learning_rate <= 0:
             raise ValueError("horizon, capacity and learning_rate must be positive")
         self.horizon = horizon
         self.capacity = capacity

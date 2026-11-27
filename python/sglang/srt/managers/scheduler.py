@@ -731,6 +731,7 @@ class Scheduler(
                 else self.tp_cpu_group
             ),
             eviction_policy=server_args.radix_eviction_policy,
+            prefix_value_learning_rate=server_args.prefix_value_learning_rate,
             enable_metrics=self.enable_metrics,
             enable_kv_cache_events=self.enable_kv_cache_events,
         )

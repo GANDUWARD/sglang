@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--policy", required=True)
     parser.add_argument("--capacity", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=1729)
+    parser.add_argument("--expected-learning-rate", type=float)
     parser.add_argument("--concurrency", type=int, choices=range(1, 5), default=1)
     parser.add_argument("--warmup-request-timeout", type=float, default=180)
     parser.add_argument("--output", type=Path, required=True)
@@ -68,6 +69,9 @@ def main():
         flush_result = response.read().decode()
     after_reset = info()
     stats = after_reset["internal_states"][0]["prefix_value_research"]
+    if args.expected_learning_rate is not None:
+        assert stats["learning_rate"] == args.expected_learning_rate, "Wrong learner rate"
+        assert stats["predictor_weights"] == [0.0] * 4, "Learner was not reset"
     assert (
         stats["observations"] == 0 and stats["eviction_calls"] == 0
     ), "Cache statistics did not reset"
