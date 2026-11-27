@@ -261,6 +261,21 @@ class RadixCache(BasePrefixCache):
         self.disable_finished_insert = params.disable_finished_insert
         self.eviction_policy = params.eviction_policy.lower()
         self.prefix_value_learning_rate = params.prefix_value_learning_rate
+        self.prefix_value_formula = params.prefix_value_formula
+        if self.prefix_value_formula not in (
+            "full",
+            "no_depth",
+            "no_decay",
+            "no_bonus",
+        ):
+            raise ValueError(
+                f"Unknown prefix value formula: {self.prefix_value_formula}"
+            )
+        if self.prefix_value_formula != "full" and self.eviction_policy not in (
+            "reuse_value",
+            "reuse_value_frozen",
+        ):
+            raise ValueError("Value-formula ablations require a reuse_value policy")
 
         self.kv_event_queue = []
 
@@ -578,6 +593,7 @@ class RadixCache(BasePrefixCache):
     def get_research_stats(self):
         result = dict(self.research_stats)
         result["policy"] = self.eviction_policy
+        result["value_formula"] = self.prefix_value_formula
         if self.reuse_model is not None:
             model = self.reuse_model
             result.update(
@@ -591,7 +607,7 @@ class RadixCache(BasePrefixCache):
         return result
 
     def _eviction_priority(self, node):
-        if self.reuse_model is None:
+        if self.reuse_model is None or self.prefix_value_formula == "no_bonus":
             return self.eviction_strategy.get_priority(node)
         if not hasattr(node, "_reuse_identity"):
             segments = []
@@ -604,8 +620,16 @@ class RadixCache(BasePrefixCache):
             node._reuse_identity = next(reversed(observations.items()), (None, 0))
         identity, depth = node._reuse_identity
         # A depth-dependent compute proxy, NOT measured GPU milliseconds.
+        # These ablations change external factors only, never predictor inputs.
+        recompute_cost = (
+            1.0 if self.prefix_value_formula == "no_depth" else 1.0 + depth / 4096.0
+        )
         value = self.reuse_model.retention_value(
-            identity, depth, recompute_cost=1.0 + depth / 4096.0, resource_size=1.0
+            identity,
+            depth,
+            recompute_cost=recompute_cost,
+            resource_size=1.0,
+            apply_recency_decay=self.prefix_value_formula != "no_decay",
         )
         # At most one second of LRU advantage: scores cannot pin old KV forever.
         return node.last_access_time + min(value, 1.0)

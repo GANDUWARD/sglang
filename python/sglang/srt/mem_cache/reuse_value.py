@@ -116,17 +116,19 @@ class OnlineReuseValue:
                 if self.pending.pop(removed, None) is not None:
                     self.censored_labels += 1
 
-    def retention_value(self, key, depth, recompute_cost, resource_size):
+    def retention_value(
+        self, key, depth, recompute_cost, resource_size, *, apply_recency_decay=True
+    ):
         """Expected cost per resource unit; caller owns the cost model/units.
 
         Finite scores change eviction order only, never pin storage. Additional
         recency decay prevents old popularity from retaining a permanent bonus.
+        Disabling that external decay does not alter predictor features or SGD.
         """
         if resource_size <= 0 or recompute_cost < 0:
             raise ValueError("invalid cost or resource size")
         record = self.records.get(key)
         probability = self._probability(self.weights, self._features(record, depth))
         age = self.horizon if record is None else self.tick - record.last_seen
-        return (
-            probability * math.exp(-age / self.horizon) * recompute_cost / resource_size
-        )
+        decay = math.exp(-age / self.horizon) if apply_recency_decay else 1.0
+        return probability * decay * recompute_cost / resource_size
